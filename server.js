@@ -17,16 +17,33 @@ import callRoutes from './routes/callRoutes.js';
 dotenv.config();
 connectDB();
 
-// ✅ Get client URL from env or use default
-const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
+// ✅ Get client URLs - support multiple domains
+const ALLOWED_ORIGINS = [
+  process.env.CLIENT_URL || "http://localhost:5173",
+  "https://www.bytetalk.live",
+  "https://bytetalk.live",
+  "https://wa-frontend-zeta.vercel.app"
+];
+
+console.log('📋 Allowed CORS origins:', ALLOWED_ORIGINS);
 
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
 
-// ✅ FIXED CORS CONFIGURATION
+// ✅ FIXED CORS CONFIGURATION - Support multiple origins
 const corsOptions = {
-  origin: CLIENT_URL, 
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or Postman)
+    if (!origin) return callback(null, true);
+
+    if (ALLOWED_ORIGINS.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('❌ Blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
@@ -50,11 +67,11 @@ app.get('/', (req, res) => {
 
 const server = http.createServer(app);
 
-// ✅ FIXED Socket.IO CORS
+// ✅ FIXED Socket.IO CORS - Support multiple origins
 const io = new Server(server, {
   cors: {
-    origin: CLIENT_URL, // ✅ Changed from "*" to specific origin
-    credentials: true,  // ✅ Added credentials
+    origin: ALLOWED_ORIGINS,
+    credentials: true,
     methods: ["GET", "POST"]
   }
 });
@@ -64,5 +81,5 @@ setupSocket(io);
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
-  console.log(`✅ CORS enabled for: ${CLIENT_URL}`);
+  console.log(`✅ CORS enabled for origins:`, ALLOWED_ORIGINS);
 });
