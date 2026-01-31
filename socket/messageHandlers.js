@@ -17,15 +17,15 @@ export default function registerMessageHandlers(io, socket, onlineUsers) {
     if (!conversation) {
       throw new Error("Conversation not found");
     }
-    
+
     const isParticipant = conversation.participants.some(
       (p) => p.toString() === userId.toString()
     );
-    
+
     if (!isParticipant) {
       throw new Error("You are not a participant of this conversation");
     }
-    
+
     return conversation;
   };
 
@@ -39,9 +39,9 @@ export default function registerMessageHandlers(io, socket, onlineUsers) {
       console.log('========================================');
       console.log('From user:', socket.userId);
       console.log('Data:', data);
-      
+
       const { message, conversationId } = data;
-      
+
       if (!message || !conversationId) {
         console.error('❌ Invalid broadcast data');
         return;
@@ -49,17 +49,17 @@ export default function registerMessageHandlers(io, socket, onlineUsers) {
 
       // Verify user is participant
       await checkParticipation(conversationId, socket.userId);
-      
+
       const messageData = {
         message,
         conversationId,
       };
 
       console.log('📢 Broadcasting media message to conversation...');
-      
+
       // Broadcast to room (everyone in conversation except sender)
       socket.to(conversationId).emit('new-message', messageData);
-      
+
       console.log('✅ Media message broadcast complete');
       console.log('========================================');
 
@@ -71,77 +71,77 @@ export default function registerMessageHandlers(io, socket, onlineUsers) {
   // ==========================================
   // 📨 SEND MESSAGE (FIXED)
   // ==========================================
- socket.on('send-message', async (data) => {
-  try {
-    console.log('========================================');
-    console.log('📨 SEND MESSAGE EVENT');
-    console.log('========================================');
-    console.log('From user:', socket.userId);
-    console.log('Data received:', data);
-    
-    const { conversationId, text } = data;
-    
-    // Validate
-    if (!conversationId || !text?.trim()) {
-      console.error('❌ Invalid message data');
-      return socket.emit('message-error', { error: 'Invalid message data' });
+  socket.on('send-message', async (data) => {
+    try {
+      console.log('========================================');
+      console.log('📨 SEND MESSAGE EVENT');
+      console.log('========================================');
+      console.log('From user:', socket.userId);
+      console.log('Data received:', data);
+
+      const { conversationId, text } = data;
+
+      // Validate
+      if (!conversationId || !text?.trim()) {
+        console.error('❌ Invalid message data');
+        return socket.emit('message-error', { error: 'Invalid message data' });
+      }
+
+      if (!isValidObjectId(conversationId)) {
+        console.error('❌ Invalid conversation ID format');
+        return socket.emit('message-error', { error: 'Invalid conversation ID' });
+      }
+
+      // Verify user is participant
+      const conversation = await checkParticipation(conversationId, socket.userId);
+      console.log('✅ User is participant of conversation');
+
+      // Create message in database
+      console.log('💾 Creating message in database...');
+      const newMessage = await Message.create({
+        sender: socket.userId,
+        conversation: conversationId,
+        text: text.trim(),
+      });
+
+      // Populate sender info
+      await newMessage.populate('sender', 'name email avatarUrl');
+      console.log('✅ Message created:', newMessage._id);
+
+      // Update conversation's last message
+      conversation.lastMessage = newMessage._id;
+      await conversation.save();
+      console.log('✅ Conversation last message updated');
+
+      // Prepare message data
+      const messageData = {
+        message: newMessage,
+        conversationId: conversationId,
+      };
+
+      console.log('📢 Broadcasting message...');
+
+      // ✅ OPTION 1: Broadcast to room (everyone in the conversation)
+      io.to(conversationId).emit('new-message', messageData);
+
+      // ✅ Also send to sender's other sockets (multi-device support)
+      const senderSockets = getUserSockets(socket.userId);
+      senderSockets.forEach((socketId) => {
+        io.to(socketId).emit('new-message', messageData);
+      });
+
+      console.log('✅ Message broadcast complete');
+      console.log('========================================');
+
+    } catch (error) {
+      console.error('========================================');
+      console.error('❌ SEND MESSAGE ERROR');
+      console.error('========================================');
+      console.error('Error:', error);
+      console.error('========================================');
+      socket.emit('message-error', { error: error.message });
     }
-
-    if (!isValidObjectId(conversationId)) {
-      console.error('❌ Invalid conversation ID format');
-      return socket.emit('message-error', { error: 'Invalid conversation ID' });
-    }
-
-    // Verify user is participant
-    const conversation = await checkParticipation(conversationId, socket.userId);
-    console.log('✅ User is participant of conversation');
-
-    // Create message in database
-    console.log('💾 Creating message in database...');
-    const newMessage = await Message.create({
-      sender: socket.userId,
-      conversation: conversationId,
-      text: text.trim(),
-    });
-
-    // Populate sender info
-    await newMessage.populate('sender', 'name email avatarUrl');
-    console.log('✅ Message created:', newMessage._id);
-
-    // Update conversation's last message
-    conversation.lastMessage = newMessage._id;
-    await conversation.save();
-    console.log('✅ Conversation last message updated');
-
-    // Prepare message data
-    const messageData = {
-      message: newMessage,
-      conversationId: conversationId,
-    };
-
-    console.log('📢 Broadcasting message...');
-    
-    // ✅ OPTION 1: Broadcast to room (everyone in the conversation)
-    io.to(conversationId).emit('new-message', messageData);
-    
-    // ✅ Also send to sender's other sockets (multi-device support)
-    const senderSockets = getUserSockets(socket.userId);
-    senderSockets.forEach((socketId) => {
-      io.to(socketId).emit('new-message', messageData);
-    });
-
-    console.log('✅ Message broadcast complete');
-    console.log('========================================');
-
-  } catch (error) {
-    console.error('========================================');
-    console.error('❌ SEND MESSAGE ERROR');
-    console.error('========================================');
-    console.error('Error:', error);
-    console.error('========================================');
-    socket.emit('message-error', { error: error.message });
-  }
-});
+  });
 
   // ==========================================
   // ✏️ EDIT MESSAGE
@@ -149,7 +149,7 @@ export default function registerMessageHandlers(io, socket, onlineUsers) {
   socket.on("message-edited", async (data) => {
     try {
       const { messageId, newText } = data;
-      
+
       if (!isValidObjectId(messageId)) {
         throw new Error("Invalid message ID");
       }
@@ -173,7 +173,7 @@ export default function registerMessageHandlers(io, socket, onlineUsers) {
       const populatedMessage = await message.populate("sender", "name email avatarUrl");
 
       const conversation = await Conversation.findById(message.conversation);
-      
+
       conversation.participants.forEach((participantId) => {
         const participantSockets = getUserSockets(participantId.toString());
         participantSockets.forEach((socketId) => {
@@ -197,7 +197,7 @@ export default function registerMessageHandlers(io, socket, onlineUsers) {
   socket.on("message-deleted", async (data) => {
     try {
       const { messageId, deleteType } = data;
-      
+
       if (!isValidObjectId(messageId)) {
         throw new Error("Invalid message ID");
       }
@@ -217,7 +217,7 @@ export default function registerMessageHandlers(io, socket, onlineUsers) {
         }
 
         await Message.findByIdAndDelete(messageId);
-        
+
         conversation.participants.forEach((participantId) => {
           const participantSockets = getUserSockets(participantId.toString());
           participantSockets.forEach((socketId) => {
@@ -254,7 +254,7 @@ export default function registerMessageHandlers(io, socket, onlineUsers) {
       }
 
       await checkParticipation(message.conversation, userId);
-      
+
       const existingReaction = message.reactions.find(
         r => r.user.toString() === userId && r.emoji === emoji
       );
@@ -268,14 +268,14 @@ export default function registerMessageHandlers(io, socket, onlineUsers) {
       }
 
       await message.save();
-      
+
       const populatedMessage = await message.populate([
         { path: "sender", select: "name email avatarUrl" },
         { path: "reactions.user", select: "name email avatarUrl" }
       ]);
 
       const conversation = await Conversation.findById(message.conversation);
-      
+
       conversation.participants.forEach((participantId) => {
         const participantSockets = getUserSockets(participantId.toString());
         participantSockets.forEach((socketId) => {
@@ -366,5 +366,69 @@ export default function registerMessageHandlers(io, socket, onlineUsers) {
   socket.on("leave-conversation", (conversationId) => {
     socket.leave(conversationId);
     console.log(`👋 User ${socket.userId} left conversation ${conversationId}`);
+  });
+
+  // ==========================================
+  // 👁️ MARK MESSAGES AS SEEN
+  // ==========================================
+  socket.on("mark-messages-seen", async (data) => {
+    try {
+      const { conversationId } = data;
+      const userId = socket.userId;
+
+      console.log('========================================');
+      console.log('👁️ MARK MESSAGES SEEN');
+      console.log('========================================');
+      console.log('User:', userId);
+      console.log('Conversation:', conversationId);
+
+      if (!isValidObjectId(conversationId)) {
+        throw new Error("Invalid conversation ID");
+      }
+
+      const conversation = await checkParticipation(conversationId, userId);
+
+      // Update all messages in this conversation that the user hasn't seen
+      const result = await Message.updateMany(
+        {
+          conversation: conversationId,
+          sender: { $ne: userId }, // Not sent by the user
+          seenBy: { $ne: userId }, // Not already seen by the user
+        },
+        {
+          $addToSet: { seenBy: userId }
+        }
+      );
+
+      console.log(`✅ Marked ${result.modifiedCount} messages as seen`);
+
+      // Get updated messages to broadcast
+      if (result.modifiedCount > 0) {
+        const updatedMessages = await Message.find({
+          conversation: conversationId,
+          seenBy: userId
+        })
+          .populate("sender", "name email avatarUrl")
+          .sort({ createdAt: -1 })
+          .limit(50);
+
+        // Broadcast to all participants that messages were seen
+        conversation.participants.forEach((participantId) => {
+          const participantSockets = getUserSockets(participantId.toString());
+          participantSockets.forEach((socketId) => {
+            io.to(socketId).emit("messages-seen", {
+              conversationId,
+              seenBy: userId,
+              messageIds: updatedMessages.map(m => m._id)
+            });
+          });
+        });
+      }
+
+      console.log('========================================');
+    } catch (error) {
+      console.error("❌ Socket mark-messages-seen error:", error);
+      socket.emit("message-error", { error: error.message });
+    }
   });
 }
